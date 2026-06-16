@@ -1,0 +1,36 @@
+# docker-compose.yml — dashboard + Huly bridge. The Allure backend is EXTERNAL
+# (existing allure.nbfi.ru); nginx proxies /allure/* to it on the same origin (no CORS).
+#
+#   docker compose -f deploy/docker-compose.yml --project-directory . --env-file .env up -d --build
+#   open http://localhost:8080
+#
+# How data flows in:
+#   your CI --(allure-results)--> allure.nbfi.ru/allure-docker-service (send-results + generate-report)
+#   nginx proxies /allure/* to allure.nbfi.ru, the dashboard reads widgets/*.json. No CORS.
+#   NOTE: the dashboard container must have network reach to allure.nbfi.ru.
+
+services:
+  # --- the React dashboard (this repo) ---
+  dashboard:
+    build: .                       # uses the existing Dockerfile (Vite build -> nginx)
+    ports:
+      - "8080:80"
+    volumes:
+      # mount the proxy config produced above into the serve-stage nginx
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+  # --- Huly MCP bridge: dashboard "Create task in Huly" -> real issue ---
+  # Acts as an MCP client to your existing Huly MCP server (same one as in Claude Code).
+  # The token lives ONLY here; the frontend just calls /api/huly/issue on the same origin.
+  huly-bridge:
+    build: ./deploy/huly-bridge
+    environment:
+      HULY_MCP_URL: ${HULY_MCP_URL}       # URL of your Huly MCP server
+      HULY_TOKEN: ${HULY_TOKEN}           # from .env, never committed
+      HULY_PROJECT: ${HULY_PROJECT:-QA}
+      HULY_CREATE_TOOL: ${HULY_CREATE_TOOL:-create_issue}
+      HULY_BASE: https://do.nbfi.ru
+    expose:
+      - "8090"
+    restart: unless-stopped

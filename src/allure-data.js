@@ -1,16 +1,16 @@
 // allure-data.js — data layer for the cross-project Allure overview dashboard.
-// Currently returns MOCK data. To go live, set CONFIG.MOCK = false and implement
-// the real fetch in fetchProjects() against CONFIG.API_BASE (Allure 3 / allure-docker-service).
-// No secrets in code — auth (if needed) is expected via the gateway / reverse proxy.
+// LIVE by default against allure-docker-service via the nginx same-origin proxy
+// (CONFIG.API_BASE = '/allure'). Set CONFIG.MOCK = true for local dev without a backend.
+// No secrets in code — auth (if any) is handled by the reverse proxy / SSO.
 
 export const CONFIG = {
-  API_BASE: 'https://allure.nbfi.ru/allure-docker-service',
-  HULY_BASE: 'https://do.nbfi.ru',           // self-hosted task tracker (MCP target)
-  GITLAB_BASE: 'https://gitlab.nbfi.ru',     // CI pipelines
+  API_BASE: '/allure',                       // relative -> nginx proxies to allure-docker-service (no CORS)
+  HULY_BASE: 'https://do.nbfi.ru',           // self-hosted task tracker (href base only)
+  GITLAB_BASE: 'https://gitlab.nbfi.ru',     // CI pipeline links
   AUTO_REFRESH_MS: 5 * 60 * 1000,            // 5 minutes
   PASS_THRESHOLD: 90,                        // default alert threshold (%)
   TREND_POINTS: 14,
-  MOCK: true,
+  MOCK: false,                               // live (set true for local dev without a backend)
 };
 
 // ---- helpers ---------------------------------------------------------------
@@ -238,37 +238,68 @@ export async function fetchProjects() {
     return PROFILES.map(normalize);
   }
 
-  // ---- LIVE MODE (Allure 3 / allure-docker-service) ----
-  // 1) list:    GET {API_BASE}/projects -> { data: { projects: { <id>: {} } } }
-  // 2) summary: GET {API_BASE}/projects/<id>/reports/latest/widgets/summary.json
-  // 3) trend:   GET {API_BASE}/projects/<id>/reports/latest/widgets/history-trend.json
+  // ---- LIVE MODE (allure-docker-service) ----
+  // Same-origin via nginx: CONFIG.API_BASE = '/allure' -> allure-docker-service.
+  //   list:       GET {base}/projects -> { data: { projects: { <id>: {} } } }
+  //   summary:    GET {base}/projects/<id>/reports/latest/widgets/summary.json
+  //   trend:      GET {base}/projects/<id>/reports/latest/widgets/history-trend.json
+  //   categories: GET {base}/projects/<id>/reports/latest/widgets/categories.json
   const base = CONFIG.API_BASE;
   const list = await fetch(`${base}/projects`).then((r) => r.json());
   const ids = Object.keys(list?.data?.projects || {});
+
   return Promise.all(ids.map(async (id) => {
-    const [summary, trendRaw] = await Promise.all([
-      fetch(`${base}/projects/${id}/reports/latest/widgets/summary.json`).then((r) => r.json()),
-      fetch(`${base}/projects/${id}/reports/latest/widgets/history-trend.json`).then((r) => r.json()).catch(() => []),
+    const rep = `${base}/projects/${id}/reports/latest`;
+    const [summary, trendRaw, categories] = await Promise.all([
+      fetch(`${rep}/widgets/summary.json`).then((r) => r.json()),
+      fetch(`${rep}/widgets/history-trend.json`).then((r) => r.json()).catch(() => []),
+      fetch(`${rep}/widgets/categories.json`).then((r) => r.json()).catch(() => []),
     ]);
+
     const st = summary.statistic || {};
-    const trend = (trendRaw || []).map((b) => ({
+
+    // allure-docker-service returns history-trend NEWEST-first; charts and `last`
+    // expect chronological order -> reverse, then keep the most recent N.
+    // reportUrl from the API is relative (../<N>/index.html) -> build an absolute one.
+    const projUrl = `${base}/projects/${id}`;
+    const trend = (trendRaw || []).slice().reverse().slice(-CONFIG.TREND_POINTS).map((b) => ({
       buildOrder: b.buildOrder,
-      reportUrl: b.reportUrl,
+      reportUrl: `${projUrl}/reports/${b.buildOrder}/index.html`,
       passed: b.data?.passed || 0, failed: b.data?.failed || 0,
       broken: b.data?.broken || 0, skipped: b.data?.skipped || 0,
-      total: b.data?.total || 0, duration: null, ts: null,
+      total: b.data?.total || 0,
+      duration: null, ts: null,           // not in history-trend.json — see HANDOFF note
       passRate: b.data?.total ? (b.data.passed / b.data.total) * 100 : 0,
     }));
+
     const passRate = st.total ? (st.passed / st.total) * 100 : 0;
-    const lastRunFailed = trend.length ? (trend[trend.length - 1].passed === 0 && trend[trend.length - 1].total > 0) : false;
+    const last = trend[trend.length - 1];
+    const lastRunFailed = last ? (last.passed === 0 && last.total > 0) : false;
+
+    // categories.json is { total, items: [...] } on current allure-docker-service
+    // (older versions return a bare array) — handle both.
+    const catItems = Array.isArray(categories) ? categories : (categories?.items || []);
+    const defects = catItems.map((c) => ({
+      name: c.name,
+      count: c.statistic ? (c.statistic.total || 0) : (c.children?.length ?? 0),
+      type: /flaky|test|fixture|selector/i.test(c.name) ? 'test' : 'product',
+    })).sort((a, b) => b.count - a.count).slice(0, 6);
+
     return {
       id, name: summary.reportName || id, domain: '', reportName: summary.reportName || id,
-      statistic: st, time: summary.time || {}, passRate, health: healthOf(passRate, lastRunFailed),
-      lastRunFailed, flaky: 0, trend,
-      latestReportUrl: `${base}/projects/${id}/reports/latest/index.html`,
+      statistic: st, time: summary.time || {}, passRate,
+      health: healthOf(passRate, lastRunFailed), lastRunFailed,
+      flaky: 0,
+      trend,
+      latestReportUrl: `${rep}/index.html`,
       reports: trend.slice().reverse().map((b) => ({ n: b.buildOrder, url: b.reportUrl, ts: b.ts, passRate: b.passRate })),
-      ci: { pipelineUrl: '', lastPipelineUrl: '', branch: 'main' },
-      defects: [], lowPerforming: [],
+      ci: {
+        pipelineUrl: `${CONFIG.GITLAB_BASE}/${id}/-/pipelines`,
+        lastPipelineUrl: `${CONFIG.GITLAB_BASE}/${id}/-/pipelines`,
+        branch: 'main',
+      },
+      defects,
+      lowPerforming: [],
     };
   }));
 }

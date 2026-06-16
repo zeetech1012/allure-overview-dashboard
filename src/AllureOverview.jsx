@@ -300,9 +300,27 @@ export default class AllureOverview extends React.Component {
   toggleOnlyBad() { this.setState((s) => ({ onlyBad: !s.onlyBad })) }
   toggleDir() { this.setState((s) => ({ sortDir: s.sortDir === 'asc' ? 'desc' : 'asc' })) }
   toggleAuto() { this.setState((s) => ({ autoRefresh: !s.autoRefresh })) }
-  openHuly(p) {
-    const key = 'QA-' + (1000 + Math.floor(Math.random() * 8999))
-    this.setState({ hulyToast: { show: true, key, name: p.name, url: (this.CONFIG && this.CONFIG.HULY_BASE) || 'https://do.nbfi.ru' } })
+  async openHuly(p) {
+    this.setState({ hulyToast: { show: true, pending: true, name: p.name } })
+    try {
+      const res = await fetch('/api/huly/issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project: p.name,
+          passRate: p.passRate,
+          threshold: Number(this.state.threshold ?? this.props.passThreshold ?? 90),
+          failedTests: (p.lowPerforming || []).map((t) => t.name),
+          reportUrl: p.latestReportUrl,
+          pipelineUrl: p.ci?.lastPipelineUrl,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'failed')
+      this.setState({ hulyToast: { show: true, key: data.key || '—', name: p.name, url: data.url || (this.CONFIG?.HULY_BASE || 'https://do.nbfi.ru') } })
+    } catch (e) {
+      this.setState({ hulyToast: { show: true, error: true, key: 'ошибка', name: p.name, url: this.CONFIG?.HULY_BASE || 'https://do.nbfi.ru' } })
+    }
     if (this._toastT) clearTimeout(this._toastT)
     this._toastT = setTimeout(() => this.setState({ hulyToast: { show: false } }), 5200)
   }

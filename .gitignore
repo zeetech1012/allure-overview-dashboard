@@ -3,3 +3,9 @@ dist
 *.local
 .DS_Store
 HANDOFF.md
+
+# secrets & generated artifacts (HANDOFF §3)
+.env
+allure-results/
+allure-reports/
+deploy/huly-bridge/node_modules/

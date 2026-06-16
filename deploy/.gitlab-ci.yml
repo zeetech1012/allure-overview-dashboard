@@ -1,0 +1,44 @@
+# .gitlab-ci.yml — FOUNDATION for the QA -> Allure pipeline.
+# Two stages: run tests (produce allure-results) -> publish to allure-docker-service.
+# Adapt the `test` job's `script` to your actual stack (pytest / jest / go test / ...).
+#
+# Required CI/CD variables (Settings -> CI/CD -> Variables):
+#   ALLURE_BASE      e.g. https://allure.nbfi.ru/allure-docker-service  (or internal URL)
+#   ALLURE_TOKEN     only if the service is secured (SECURITY_ENABLED=1); else omit
+#
+# The Allure "project id" is derived from the GitLab project name, so each repo
+# lands on its own card in the dashboard automatically.
+
+stages:
+  - test
+  - report
+
+variables:
+  ALLURE_PROJECT: "$CI_PROJECT_NAME"     # one Allure project per repo
+  ALLURE_RESULTS: "allure-results"
+
+# ---- 1. Run the suite, emit Allure results ----
+test:
+  stage: test
+  image: python:3.12-slim                # <-- swap for your test image
+  script:
+    # EXAMPLE (python/pytest). Replace with your real command:
+    - pip install pytest allure-pytest
+    - pytest --alluredir=$ALLURE_RESULTS || true   # keep going so we still publish
+  artifacts:
+    when: always
+    paths:
+      - $ALLURE_RESULTS
+    expire_in: 1 week
+
+# ---- 2. Push results to allure-docker-service + (re)generate the report ----
+publish-allure:
+  stage: report
+  image: python:3.12-slim
+  when: always                           # publish even if tests failed
+  needs: ["test"]
+  script:
+    - pip install requests
+    - python deploy/ci/upload_allure.py
+  rules:
+    - if: '$CI_COMMIT_BRANCH'             # run on every branch pipeline

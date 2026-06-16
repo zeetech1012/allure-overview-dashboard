@@ -1,0 +1,14 @@
+{
+  "name": "huly-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Thin HTTP -> MCP bridge so the browser dashboard can create Huly issues without ever holding the token.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^4.19.2"
+  }
+}
