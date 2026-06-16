@@ -1,0 +1,13 @@
+/* Global resets & animations — ported verbatim from the design's <helmet> block. */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(128, 140, 160, 0.35); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes amx-spin { to { transform: rotate(360deg); } }
+@keyframes amx-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes amx-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes amx-slide { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
